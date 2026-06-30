@@ -1,0 +1,11 @@
+# Phase 1: data + modeling
+yfinance
+pandas
+numpy
+ta
+scikit-learn
+xgboost
+
+shap
+streamlit
+python-dotenv
