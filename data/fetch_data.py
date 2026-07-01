@@ -16,6 +16,9 @@ WATCHLIST = [
     "ICICIBANK.NS",
 ]
 
+# Market index — fetched separately and merged as context features
+MARKET_INDEX = "^NSEI"
+
 def fetch_one(symbol: str, interval : str="5m", period: str="60d")-> pd.DataFrame:
     print(f"Fetching {symbol}...")
 
@@ -66,13 +69,62 @@ def save(df: pd.DataFrame, filename: str = "intraday_raw.csv"):
     print(f"\nSaved {len(df)} rows → {path}")
     return path
 
-if __name__=="__main__":
-    print("Fetching intraday data for watchlist...\n")
-    data=fetch_all(interval="5m", period="60d")
+def fetch_with_market_context(interval: str = "1d", period: str = "5y") -> pd.DataFrame:
+    """
+    Fetches stock data and merges Nifty 50 index features as market context.
+    This gives the model awareness of the broader market environment.
+    """
+    # Fetch stocks
+    stocks_df = fetch_all(WATCHLIST, interval=interval, period=period)
+
+    # Fetch Nifty 50
+    print(f"\n  Fetching market index {MARKET_INDEX}...")
+    nifty = yf.download(MARKET_INDEX, interval=interval, period=period,
+                        progress=False, auto_adjust=True)
+
+    if isinstance(nifty.columns, pd.MultiIndex):
+        nifty.columns = nifty.columns.get_level_values(0)
+
+    nifty = nifty.reset_index()
+    nifty.columns = [c.lower() for c in nifty.columns]
+    nifty.rename(columns={"datetime": "timestamp", "date": "timestamp"}, inplace=True)
+
+    # Compute Nifty-specific features
+    nifty = nifty.sort_values("timestamp").reset_index(drop=True)
+    nifty["nifty_returns_1"]  = nifty["close"].pct_change(1)
+    nifty["nifty_returns_5"]  = nifty["close"].pct_change(5)
+    nifty["nifty_ema_9"]      = nifty["close"].ewm(span=9).mean()
+    nifty["nifty_ema_21"]     = nifty["close"].ewm(span=21).mean()
+    nifty["nifty_trend"]      = nifty["nifty_ema_9"] - nifty["nifty_ema_21"]
+    nifty["nifty_volatility"] = nifty["close"].pct_change().rolling(10).std()
+
+    # Keep only the context columns + timestamp for merging
+    nifty_context = nifty[[
+        "timestamp", "nifty_returns_1", "nifty_returns_5",
+        "nifty_trend", "nifty_volatility"
+    ]].copy()
+
+    # Normalize timestamp to date only for merging (daily data)
+    stocks_df["date"]    = pd.to_datetime(stocks_df["timestamp"]).dt.date
+    nifty_context["date"] = pd.to_datetime(nifty_context["timestamp"]).dt.date
+    nifty_context        = nifty_context.drop(columns=["timestamp"])
+
+    # Merge on date
+    merged = stocks_df.merge(nifty_context, on="date", how="left")
+    merged = merged.drop(columns=["date"])
+
+    print(f"  ✓ Market context merged. NaN context rows: "
+          f"{merged['nifty_trend'].isna().sum()}")
+
+    return merged
+
+if __name__ == "__main__":
+    print("Fetching daily data with market context (5 years)...\n")
+    data = fetch_with_market_context(interval="1d", period="5y")
 
     print(f"\nTotal rows : {len(data)}")
     print(f"Symbols    : {data['symbol'].unique()}")
     print(f"Date range : {data['timestamp'].min()} → {data['timestamp'].max()}")
     print(f"\nSample:\n{data.head()}")
 
-    save(data)
+    save(data, filename="daily_raw.csv")

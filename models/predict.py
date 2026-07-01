@@ -17,6 +17,8 @@ FEATURE_COLUMNS = [
     "rsi_14", "stoch_k", "macd", "macd_signal", "macd_diff",
     "ema_diff", "bb_width", "atr_14", "volume_ratio",
     "returns_1", "returns_5", "high_low_pct",
+    "nifty_returns_1", "nifty_returns_5",
+    "nifty_trend", "nifty_volatility",
 ]
 
 # Maps encoded label back to human-readable signal
@@ -109,6 +111,10 @@ if __name__ == "__main__":
         "returns_1"  : 0.008,
         "returns_5"  : 0.021,
         "high_low_pct": 0.015,
+        "nifty_returns_1" : 0.002,   # <-- ADDED
+        "nifty_returns_5" : 0.011,   # <-- ADDED
+        "nifty_trend"     : 1,       # <-- ADDED (Assuming 1=up, -1=down etc.)
+        "nifty_volatility": 0.012,   # <-- ADDED
     }
 
     result = predict_signal(model, le, sample_features)

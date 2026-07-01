@@ -15,6 +15,9 @@ FEATURE_COLUMNS = [
     "rsi_14", "stoch_k", "macd", "macd_signal", "macd_diff",
     "ema_diff", "bb_width", "atr_14", "volume_ratio",
     "returns_1", "returns_5", "high_low_pct",
+    # Market context — these were missing before
+    "nifty_returns_1", "nifty_returns_5",
+    "nifty_trend", "nifty_volatility",
 ]
 
 def load_data() -> pd.DataFrame:
@@ -172,22 +175,61 @@ def print_feature_importance(model, le):
         bar = "█" * int(score * 200)
         print(f"  {feat:<20} {score:.4f}  {bar}")
 
-if __name__=="__main__":
-    df=load_data()
-    X,y,le=prepare_xy(df)
-    print(f"\nX shape: {X.shape}  (rows × features)")
-    print(f"y distribution: {dict(zip(le.classes_, np.bincount(y)))}")
+if __name__ == "__main__":
+    # 1. Load data
+    df = load_data()
 
-    # 3. Walk-forward validation — tells us if the model has real signal
-    fold_scores = walk_forward_evaluation(X, y, le, n_splits=5)
+    # 2. Chronological train/test split — 80% train, 20% test
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
-    # 4. Train final model on all data
-    model = train_final_model(X, y, le)
+    # Then split 80% train / 20% test
+    split_idx  = int(len(df) * 0.80)
+    df_train   = df.iloc[:split_idx].copy()
+    df_test    = df.iloc[split_idx:].copy()
 
-    # 5. Feature importance — transparency into what the model learned
+    print(f"\nTrain size : {len(df_train)} rows "
+          f"({df_train['timestamp'].min()} → {df_train['timestamp'].max()})")
+    print(f"Test size  : {len(df_test)} rows "
+          f"({df_test['timestamp'].min()} → {df_test['timestamp'].max()})")
+
+    # Save test set separately — backtest will use ONLY this
+    test_path = DATA_DIR / "daily_test.csv"
+    df_test.to_csv(test_path, index=False)
+    print(f"Test set saved → {test_path}")
+
+    # 3. Prepare features — train set only
+    X_train, y_train, le = prepare_xy(df_train)
+    print(f"\nX_train shape: {X_train.shape}")
+    print(f"y distribution: {dict(zip(le.classes_, np.bincount(y_train)))}")
+
+    # 4. Walk-forward validation on training set only
+    fold_scores = walk_forward_evaluation(X_train, y_train, le, n_splits=5)
+
+    # 5. Train final model on full training set
+    model = train_final_model(X_train, y_train, le)
+
+    # 6. Evaluate on test set (out-of-sample — the honest number)
+    X_test, y_test, _ = prepare_xy(df_test)
+    y_pred_encoded     = model.predict(X_test)
+
+    y_test_decoded = le.inverse_transform(y_test)
+    y_pred_decoded = le.inverse_transform(y_pred_encoded)
+
+    signal_mask = y_test_decoded != 0
+    if signal_mask.sum() > 0:
+        oos_accuracy = (
+            y_test_decoded[signal_mask] == y_pred_decoded[signal_mask]
+        ).mean()
+    else:
+        oos_accuracy = 0.0
+
+    print(f"\nOut-of-sample signal accuracy : {oos_accuracy:.2%}")
+    print("(This is the honest number — model never saw this data)")
+
+    # 7. Feature importance
     print_feature_importance(model, le)
 
-    # 6. Save model
+    # 8. Save model
     save_model(model, le)
 
     print("\nDone. Model is ready for prediction.")

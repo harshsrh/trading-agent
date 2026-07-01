@@ -6,18 +6,13 @@ from pathlib import Path
 RAW_DIR = Path(__file__).parent / "raw"
 
 FEATURE_COLUMNS = [
-    "rsi_14",
-    "stoch_k",
-    "macd",
-    "macd_signal",
-    "macd_diff",
-    "ema_diff",
-    "bb_width",
-    "atr_14",
-    "volume_ratio",
-    "returns_1",
-    "returns_5",
-    "high_low_pct",
+    # Stock-level technical indicators
+    "rsi_14", "stoch_k", "macd", "macd_signal", "macd_diff",
+    "ema_diff", "bb_width", "atr_14", "volume_ratio",
+    "returns_1", "returns_5", "high_low_pct",
+    # Market context — Nifty 50 environment
+    "nifty_returns_1", "nifty_returns_5",
+    "nifty_trend", "nifty_volatility",
 ]
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -82,6 +77,11 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # How wide was this candle relative to price? Proxy for indecision/momentum.
     df["high_low_pct"] = (high - low) / close
 
+    # Preserve market context columns if they exist
+    for col in ["nifty_returns_1", "nifty_returns_5", "nifty_trend", "nifty_volatility"]:
+        if col in df.columns:
+            pass  # already present, just keep them
+
     return df
 
 def add_target(df: pd.DataFrame, horizon: int = 3, threshold: float = 0.003) -> pd.DataFrame:
@@ -98,17 +98,13 @@ def add_target(df: pd.DataFrame, horizon: int = 3, threshold: float = 0.003) -> 
 
     return df
 
-def build_features(df: pd.DataFrame, horizon: int = 3, threshold: float = 0.003) -> pd.DataFrame:
+def build_features(df: pd.DataFrame, horizon: int = 3, threshold: float = 0.002) -> pd.DataFrame:
     df = add_indicators(df)
     df = add_target(df, horizon=horizon, threshold=threshold)
     df = df.dropna().reset_index(drop=True)
     return df
 
-def process_all(input_file: str = "intraday_raw.csv") -> pd.DataFrame:
-    """
-    Loads raw data, processes each symbol separately, combines results.
-    We process per symbol so rolling windows don't bleed across stocks.
-    """
+def process_all(input_file: str = "daily_raw.csv") -> pd.DataFrame:
     path = RAW_DIR / input_file
     raw  = pd.read_csv(path, parse_dates=["timestamp"])
 
@@ -120,9 +116,14 @@ def process_all(input_file: str = "intraday_raw.csv") -> pd.DataFrame:
     for symbol in raw["symbol"].unique():
         symbol_df = raw[raw["symbol"] == symbol].copy()
         featured  = build_features(symbol_df)
+        # Drop rows where market context is missing
+        featured  = featured.dropna(subset=[
+            "nifty_returns_1", "nifty_returns_5",
+            "nifty_trend", "nifty_volatility"
+        ]).reset_index(drop=True)
         all_featured.append(featured)
         print(f"  ✓ {symbol}: {len(featured)} rows after feature engineering")
-    
+
     combined = pd.concat(all_featured, ignore_index=True)
     return combined
 
@@ -138,7 +139,7 @@ if __name__ == "__main__":
     print(featured[["timestamp", "symbol", "close"] + FEATURE_COLUMNS + ["target"]].head())
 
     # Save for use in model training
-    out_path = RAW_DIR / "intraday_featured.csv"
+    out_path = RAW_DIR / "daily_featured.csv"
     featured.to_csv(out_path, index=False)
     print(f"\nSaved featured data → {out_path}")
 
